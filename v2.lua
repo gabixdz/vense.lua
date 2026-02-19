@@ -1,905 +1,1131 @@
 --[[
-    $vense.lua$ - Enhanced Smooth GUI Menu with Toggleable Features
-    Features: Noclip, Infinite Jumps, Model Changer, China Hat, Boost FPS
-    Mobile Supported, Draggable, Minimizable, Toggle Indicators
+    $vense.lua$ V3
+    Features: Noclip, InfiniteJump, ChinaHat, BoostFPS,
+              Health Bar (animated, customizable), Crosshair (customizable + spin)
 ]]
 
-local Players = game:GetService("Players")
+local Players        = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
+local RunService     = game:GetService("RunService")
+local TweenService   = game:GetService("TweenService")
 
-local player = Players.LocalPlayer
+local player    = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local character = player.Character or player.CharacterAdded:Wait()
 
--- Configuration
+-- ── Config ────────────────────────────────────────────────────────────────────
 local Config = {
-    MainColor = Color3.fromRGB(30, 30, 35),
+    MainColor   = Color3.fromRGB(30, 30, 35),
     AccentColor = Color3.fromRGB(100, 200, 255),
-    TextColor = Color3.fromRGB(255, 255, 255),
-    DarkColor = Color3.fromRGB(20, 20, 25),
-    OnColor = Color3.fromRGB(100, 200, 100),
+    TextColor   = Color3.fromRGB(255, 255, 255),
+    DarkColor   = Color3.fromRGB(20, 20, 25),
+    OnColor     = Color3.fromRGB(100, 200, 100),
 }
 
--- Feature Toggles and States
 local Features = {
-    Noclip = false,
-    InfiniteJump = false,
-    ChinaHat = false,
-    BoostFPS = false,
+    Noclip        = false,
+    InfiniteJump  = false,
+    ChinaHat      = false,
+    BoostFPS      = false,
+    HealthBar     = false,
+    Crosshair     = false,
 }
 
--- Color States
 local ColorStates = {
-    ModelColor = Color3.fromRGB(100, 200, 255),
-    ModelNeon = false,
-    ChinaHatColor = Color3.fromRGB(255, 100, 100),
-    ChinaHatNeon = false,
+    ChinaHatColor   = Color3.fromRGB(255, 80, 80),
+    ChinaHatNeon    = false,
+    ChinaHatRainbow = false,
+
+    HealthBarColor   = Color3.fromRGB(100, 220, 100),
+    HealthBarNeon    = false,
+    HealthBarRainbow = false,
+
+    CrosshairColor   = Color3.fromRGB(255, 255, 255),
+    CrosshairNeon    = false,
+    CrosshairRainbow = false,
+    CrosshairSpin    = false,
 }
 
--- Create Injection Animation Screen
+local Connections    = {}
+local RainbowConns   = {}   -- keyed: "hat", "healthbar", "crosshair"
+
+-- ── Helpers ───────────────────────────────────────────────────────────────────
+local function uiCorner(parent, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or 8)
+    c.Parent = parent
+    return c
+end
+
+local function makeTween(obj, t, props, style, dir)
+    return TweenService:Create(obj,
+        TweenInfo.new(t, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out),
+        props)
+end
+
+local function stopRainbowKey(key)
+    if RainbowConns[key] then
+        RainbowConns[key]:Disconnect()
+        RainbowConns[key] = nil
+    end
+end
+
+-- ── Preset color palette (shared across all pickers) ─────────────────────────
+local PRESETS = {
+    { name = "red",       color = Color3.fromRGB(220, 50,  50),  neon = false, rainbow = false },
+    { name = "blue",      color = Color3.fromRGB(50,  120, 255), neon = false, rainbow = false },
+    { name = "yellow",    color = Color3.fromRGB(255, 220, 30),  neon = false, rainbow = false },
+    { name = "white",     color = Color3.fromRGB(255, 255, 255), neon = false, rainbow = false },
+    { name = "black",     color = Color3.fromRGB(20,  20,  20),  neon = false, rainbow = false },
+    { name = "green",     color = Color3.fromRGB(30,  160, 60),  neon = false, rainbow = false },
+    { name = "✦ neon",   color = Color3.fromRGB(0,   255, 120), neon = true,  rainbow = false },
+    { name = "❖ rainbow", color = Color3.fromRGB(255, 0,   0),   neon = true,  rainbow = true  },
+}
+
+-- ── Injection Splash ──────────────────────────────────────────────────────────
 local function createInjectionAnimation()
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "InjectionAnimation"
-    screenGui.ResetOnSpawn = false
-    screenGui.Parent = playerGui
+    local sg  = Instance.new("ScreenGui")
+    sg.Name   = "InjectionAnimation"
+    sg.ResetOnSpawn = false
+    sg.Parent = playerGui
 
-    local textLabel = Instance.new("TextLabel")
-    textLabel.Name = "InjectionText"
-    textLabel.Size = UDim2.new(1, 0, 1, 0)
-    textLabel.BackgroundColor3 = Config.DarkColor
-    textLabel.BackgroundTransparency = 0
-    textLabel.Text = "$vense.lua$"
-    textLabel.TextSize = 48
-    textLabel.TextColor3 = Config.AccentColor
-    textLabel.Font = Enum.Font.GothamBold
-    textLabel.Parent = screenGui
+    local lbl = Instance.new("TextLabel")
+    lbl.Size                = UDim2.new(1, 0, 1, 0)
+    lbl.BackgroundColor3    = Config.DarkColor
+    lbl.BackgroundTransparency = 0
+    lbl.Text                = "$vense.lua$"
+    lbl.TextSize            = 48
+    lbl.TextColor3          = Config.AccentColor
+    lbl.Font                = Enum.Font.GothamBold
+    lbl.TextTransparency    = 1
+    lbl.Parent              = sg
 
-    -- Animation
-    local TweenService = game:GetService("TweenService")
-    
-    -- Fade in text
-    local fadeInTween = TweenService:Create(
-        textLabel,
-        TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
-        {TextTransparency = 0}
-    )
-    
-    textLabel.TextTransparency = 1
-    fadeInTween:Play()
-    
-    -- Wait and fade out
-    fadeInTween.Completed:Connect(function()
+    local fi = makeTween(lbl, 0.8, {TextTransparency = 0})
+    fi:Play()
+    fi.Completed:Connect(function()
         wait(1)
-        local fadeOutTween = TweenService:Create(
-            textLabel,
+        local fo = TweenService:Create(lbl,
             TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
-            {TextTransparency = 1, BackgroundTransparency = 1}
-        )
-        fadeOutTween:Play()
-        fadeOutTween.Completed:Connect(function()
-            screenGui:Destroy()
-        end)
+            {TextTransparency = 1, BackgroundTransparency = 1})
+        fo:Play()
+        fo.Completed:Connect(function() sg:Destroy() end)
     end)
 end
 
--- Color Picker GUI
-local function createColorPicker(title, initialColor, callback)
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "ColorPicker"
-    screenGui.ResetOnSpawn = false
-    screenGui.Parent = playerGui
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 300, 0, 250)
-    frame.Position = UDim2.new(0.5, -150, 0.5, -125)
-    frame.BackgroundColor3 = Config.MainColor
-    frame.BorderSizePixel = 0
-    frame.Parent = screenGui
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 12)
-    corner.Parent = frame
-
-    -- Title
-    local titleText = Instance.new("TextLabel")
-    titleText.Size = UDim2.new(1, 0, 0, 40)
-    titleText.BackgroundColor3 = Config.AccentColor
-    titleText.BorderSizePixel = 0
-    titleText.Text = title
-    titleText.TextColor3 = Config.TextColor
-    titleText.Font = Enum.Font.GothamBold
-    titleText.TextSize = 16
-    titleText.Parent = frame
-
-    local titleCorner = Instance.new("UICorner")
-    titleCorner.CornerRadius = UDim.new(0, 12)
-    titleCorner.Parent = titleText
-
-    -- RGB Sliders
-    local r, g, b = initialColor.R * 255, initialColor.G * 255, initialColor.B * 255
-
-    local function createSlider(label, position, initialValue, callback2)
-        local sliderContainer = Instance.new("Frame")
-        sliderContainer.Size = UDim2.new(0.9, 0, 0, 35)
-        sliderContainer.Position = UDim2.new(0.05, 0, 0, position)
-        sliderContainer.BackgroundTransparency = 1
-        sliderContainer.Parent = frame
-
-        local labelText = Instance.new("TextLabel")
-        labelText.Size = UDim2.new(0, 40, 1, 0)
-        labelText.BackgroundTransparency = 1
-        labelText.Text = label
-        labelText.TextColor3 = Config.AccentColor
-        labelText.Font = Enum.Font.GothamBold
-        labelText.TextSize = 12
-        labelText.Parent = sliderContainer
-
-        local sliderBg = Instance.new("Frame")
-        sliderBg.Size = UDim2.new(1, -80, 0, 10)
-        sliderBg.Position = UDim2.new(0, 50, 0.5, -5)
-        sliderBg.BackgroundColor3 = Config.DarkColor
-        sliderBg.BorderSizePixel = 0
-        sliderBg.Parent = sliderContainer
-
-        local sliderCorner = Instance.new("UICorner")
-        sliderCorner.CornerRadius = UDim.new(0, 5)
-        sliderCorner.Parent = sliderBg
-
-        local sliderButton = Instance.new("TextButton")
-        sliderButton.Size = UDim2.new(0, 15, 0, 15)
-        sliderButton.Position = UDim2.new(0, (initialValue / 255) * (sliderBg.AbsoluteSize.X - 15), 0.5, -7.5)
-        sliderButton.BackgroundColor3 = Config.AccentColor
-        sliderButton.BorderSizePixel = 0
-        sliderButton.Text = ""
-        sliderButton.Parent = sliderBg
-
-        local sliderCorner2 = Instance.new("UICorner")
-        sliderCorner2.CornerRadius = UDim.new(0, 7)
-        sliderCorner2.Parent = sliderButton
-
-        local valueText = Instance.new("TextLabel")
-        valueText.Size = UDim2.new(0, 30, 1, 0)
-        valueText.Position = UDim2.new(1, -30, 0, 0)
-        valueText.BackgroundTransparency = 1
-        valueText.Text = tostring(math.floor(initialValue))
-        valueText.TextColor3 = Config.TextColor
-        valueText.Font = Enum.Font.GothamBold
-        valueText.TextSize = 12
-        valueText.Parent = sliderContainer
-
-        local dragging = false
-        sliderButton.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                dragging = true
+-- ── Noclip ────────────────────────────────────────────────────────────────────
+local function toggleNoclip(enabled)
+    if Connections.Noclip then Connections.Noclip:Disconnect() end
+    if enabled then
+        Connections.Noclip = RunService.Stepped:Connect(function()
+            if not Features.Noclip or not character:FindFirstChild("HumanoidRootPart") then
+                if Connections.Noclip then Connections.Noclip:Disconnect() Connections.Noclip = nil end
+                return
             end
-        end)
-
-        UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                dragging = false
-            end
-        end)
-
-        UserInputService.InputChanged:Connect(function(input)
-            if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-                local maxX = sliderBg.AbsoluteSize.X - 15
-                local mouseX = input.Position.X - sliderBg.AbsolutePosition.X
-                local newX = math.max(0, math.min(mouseX, maxX))
-                local newValue = (newX / maxX) * 255
-                sliderButton.Position = UDim2.new(0, newX, 0.5, -7.5)
-                valueText.Text = tostring(math.floor(newValue))
-                callback2(newValue)
+            for _, p in pairs(character:GetDescendants()) do
+                if p:IsA("BasePart") then p.CanCollide = false end
             end
         end)
     end
+end
 
-    createSlider("R:", 50, r, function(val)
-        r = val
-        callback(Color3.fromRGB(r, g, b))
-    end)
+-- ── Infinite Jump ─────────────────────────────────────────────────────────────
+local function toggleInfiniteJump(enabled)
+    if Connections.InfiniteJump then Connections.InfiniteJump:Disconnect() end
+    if enabled then
+        Connections.InfiniteJump = UserInputService.JumpRequest:Connect(function()
+            if Features.InfiniteJump and character:FindFirstChild("Humanoid") then
+                character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+        end)
+    end
+end
 
-    createSlider("G:", 95, g, function(val)
-        g = val
-        callback(Color3.fromRGB(r, g, b))
-    end)
+-- ── China Hat ─────────────────────────────────────────────────────────────────
+local function applyHatColor(color, neon, rainbow)
+    local cone = character:FindFirstChild("ChinaHatCone")
+    local brim = character:FindFirstChild("ChinaHatBrim")
+    if not cone or not brim then return end
+    local mat = neon and Enum.Material.Neon or Enum.Material.SmoothPlastic
+    cone.Material = mat; brim.Material = mat
+    if not rainbow then cone.Color = color; brim.Color = color end
+end
 
-    createSlider("B:", 140, b, function(val)
-        b = val
-        callback(Color3.fromRGB(r, g, b))
-    end)
-
-    -- Close Button
-    local closeBtn = Instance.new("TextButton")
-    closeBtn.Size = UDim2.new(1, 0, 0, 40)
-    closeBtn.Position = UDim2.new(0, 0, 1, -40)
-    closeBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
-    closeBtn.BorderSizePixel = 0
-    closeBtn.Text = "CLOSE"
-    closeBtn.TextColor3 = Config.TextColor
-    closeBtn.Font = Enum.Font.GothamBold
-    closeBtn.TextSize = 14
-    closeBtn.Parent = frame
-
-    local closeCorner = Instance.new("UICorner")
-    closeCorner.CornerRadius = UDim.new(0, 12)
-    closeCorner.Parent = closeBtn
-
-    closeBtn.MouseButton1Click:Connect(function()
-        screenGui:Destroy()
+local function startHatRainbow()
+    stopRainbowKey("hat")
+    RainbowConns["hat"] = RunService.Heartbeat:Connect(function()
+        if not character:FindFirstChild("ChinaHatCone") then stopRainbowKey("hat") return end
+        local c = Color3.fromHSV((tick() * 0.5) % 1, 1, 1)
+        local cone = character:FindFirstChild("ChinaHatCone")
+        local brim = character:FindFirstChild("ChinaHatBrim")
+        if cone then cone.Color = c end
+        if brim then brim.Color = c end
     end)
 end
 
--- Create China Hat
-local function createChinaHat()
-    if not character:FindFirstChild("HumanoidRootPart") then return end
-    
+local function removeChinaHat()
+    stopRainbowKey("hat")
+    for _, name in ipairs({"ChinaHatCone", "ChinaHatBrim"}) do
+        if character:FindFirstChild(name) then character[name]:Destroy() end
+    end
     local head = character:FindFirstChild("Head")
     if head then
-        -- Remove old hat if exists
-        if character:FindFirstChild("ChinaHat") then
-            character:FindFirstChild("ChinaHat"):Destroy()
-        end
-
-        local hatModel = Instance.new("Model")
-        hatModel.Name = "ChinaHat"
-        hatModel.Parent = character
-
-        -- Main cone part
-        local cone = Instance.new("Part")
-        cone.Shape = Enum.PartType.Ball
-        cone.Size = Vector3.new(2, 2.5, 2)
-        cone.Color = ColorStates.ChinaHatColor
-        cone.Material = Enum.Material.Neon if ColorStates.ChinaHatNeon else Enum.Material.SmoothPlastic
-        cone.CanCollide = false
-        cone.TopSurface = Enum.SurfaceType.Smooth
-        cone.BottomSurface = Enum.SurfaceType.Smooth
-        cone.Parent = hatModel
-
-        -- Weld to head
-        local weld = Instance.new("WeldConstraint")
-        weld.Part0 = head
-        weld.Part1 = cone
-        weld.Parent = cone
-
-        cone.Position = head.Position + Vector3.new(0, 2, 0)
-
-        -- Add some cylinders for decoration
-        for i = 1, 3 do
-            local decoration = Instance.new("Part")
-            decoration.Shape = Enum.PartType.Ball
-            decoration.Size = Vector3.new(0.5, 2, 0.5)
-            decoration.Color = ColorStates.ChinaHatColor
-            decoration.Material = Enum.Material.Neon if ColorStates.ChinaHatNeon else Enum.Material.SmoothPlastic
-            decoration.CanCollide = false
-            decoration.Parent = hatModel
-
-            local angle = (i / 3) * math.pi * 2
-            decoration.Position = cone.Position + Vector3.new(math.cos(angle) * 1.2, 1, math.sin(angle) * 1.2)
-
-            local weld2 = Instance.new("WeldConstraint")
-            weld2.Part0 = cone
-            weld2.Part1 = decoration
-            weld2.Parent = decoration
+        for _, v in pairs(head:GetChildren()) do
+            if v:IsA("Motor6D") and (v.Name == "ChinaHatConeWeld" or v.Name == "ChinaHatBrimWeld") then
+                v:Destroy()
+            end
         end
     end
 end
 
--- Remove China Hat
-local function removeChinaHat()
-    if character:FindFirstChild("ChinaHat") then
-        character:FindFirstChild("ChinaHat"):Destroy()
+local function createChinaHat()
+    removeChinaHat()
+    local head = character:FindFirstChild("Head")
+    if not head then return end
+    local mat = ColorStates.ChinaHatNeon and Enum.Material.Neon or Enum.Material.SmoothPlastic
+    local col = ColorStates.ChinaHatColor
+
+    local brim = Instance.new("Part")
+    brim.Name = "ChinaHatBrim"; brim.Size = Vector3.new(1,1,1)
+    brim.Color = col; brim.Material = mat
+    brim.CanCollide = false; brim.Anchored = false
+    brim.TopSurface = Enum.SurfaceType.Smooth; brim.BottomSurface = Enum.SurfaceType.Smooth
+    brim.Parent = character
+    local brimMesh = Instance.new("SpecialMesh")
+    brimMesh.MeshType = Enum.MeshType.Cylinder
+    brimMesh.Scale = Vector3.new(0.4, 5.5, 5.5)
+    brimMesh.Parent = brim
+    local brimWeld = Instance.new("Motor6D")
+    brimWeld.Name = "ChinaHatBrimWeld"; brimWeld.Part0 = head; brimWeld.Part1 = brim
+    brimWeld.C0 = CFrame.new(0, head.Size.Y/2 + 0.15, 0) * CFrame.Angles(0, 0, math.rad(90))
+    brimWeld.Parent = head
+
+    local cone2 = Instance.new("Part")
+    cone2.Name = "ChinaHatCone"; cone2.Size = Vector3.new(4.2, 3.2, 4.2)
+    cone2.Color = col; cone2.Material = mat
+    cone2.CanCollide = false; cone2.Anchored = false
+    cone2.TopSurface = Enum.SurfaceType.Smooth; cone2.BottomSurface = Enum.SurfaceType.Smooth
+    cone2.Parent = character
+    local sm = Instance.new("SpecialMesh")
+    sm.MeshType = Enum.MeshType.Sphere; sm.Scale = Vector3.new(1, 0.75, 1)
+    sm.Parent = cone2
+    local coneWeld = Instance.new("Motor6D")
+    coneWeld.Name = "ChinaHatConeWeld"; coneWeld.Part0 = head; coneWeld.Part1 = cone2
+    coneWeld.C0 = CFrame.new(0, head.Size.Y/2 + 0.2 + cone2.Size.Y/2 * 0.75 - 0.3, 0)
+    coneWeld.Parent = head
+
+    if ColorStates.ChinaHatRainbow then startHatRainbow() end
+end
+
+-- ── Boost FPS ─────────────────────────────────────────────────────────────────
+local function boostFPS(enabled)
+    if enabled then
+        game.Lighting.GlobalShadows = false; game.Lighting.Brightness = 2
+        for _, d in pairs(workspace:GetDescendants()) do
+            if d:IsA("Texture") then d:Destroy() end
+        end
+    else
+        game.Lighting.GlobalShadows = true; game.Lighting.Brightness = 1
     end
 end
 
--- Boost FPS Function
-local function boostFPS()
-    local terrain = workspace.Terrain
-    
-    -- Set terrain to lowest detail
-    for _, descendant in pairs(workspace:GetDescendants()) do
-        if descendant:IsA("BasePart") then
-            descendant.Material = Enum.Material.SmoothPlastic
-            descendant.CanCollide = true
+-- ══════════════════════════════════════════════════════════════════════════════
+-- ── HEALTH BAR ────────────────────────────────────────────────────────────────
+-- ══════════════════════════════════════════════════════════════════════════════
+local HealthBarGui = nil
+
+local function destroyHealthBar()
+    stopRainbowKey("healthbar")
+    if Connections.HealthBar then Connections.HealthBar:Disconnect() Connections.HealthBar = nil end
+    if HealthBarGui then HealthBarGui:Destroy() HealthBarGui = nil end
+end
+
+local function createHealthBar()
+    destroyHealthBar()
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid then return end
+
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "VenseHealthBar"; sg.ResetOnSpawn = false
+    sg.DisplayOrder = 5; sg.Parent = playerGui
+    HealthBarGui = sg
+
+    -- Outer container — pill shaped, centered bottom of screen
+    local container = Instance.new("Frame")
+    container.Name = "Container"
+    container.Size = UDim2.new(0, 320, 0, 28)
+    container.Position = UDim2.new(0.5, -160, 1, -60)
+    container.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
+    container.BorderSizePixel = 0
+    container.Parent = sg
+    uiCorner(container, 14)
+
+    -- Subtle inner shadow frame
+    local shadow = Instance.new("Frame")
+    shadow.Size = UDim2.new(1, 4, 1, 4)
+    shadow.Position = UDim2.new(0, -2, 0, -2)
+    shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    shadow.BackgroundTransparency = 0.6
+    shadow.BorderSizePixel = 0
+    shadow.ZIndex = 0
+    shadow.Parent = container
+    uiCorner(shadow, 16)
+
+    -- Background track
+    local track = Instance.new("Frame")
+    track.Name = "Track"
+    track.Size = UDim2.new(1, -8, 1, -8)
+    track.Position = UDim2.new(0, 4, 0, 4)
+    track.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+    track.BorderSizePixel = 0
+    track.Parent = container
+    uiCorner(track, 10)
+
+    -- The actual fill bar
+    local fill = Instance.new("Frame")
+    fill.Name = "Fill"
+    fill.Size = UDim2.new(1, 0, 1, 0)  -- start full, will shrink
+    fill.Position = UDim2.new(0, 0, 0, 0)
+    fill.BackgroundColor3 = ColorStates.HealthBarColor
+    fill.BorderSizePixel = 0
+    fill.Parent = track
+    uiCorner(fill, 10)
+
+    -- Shine overlay on fill bar
+    local shine = Instance.new("Frame")
+    shine.Size = UDim2.new(1, 0, 0.45, 0)
+    shine.Position = UDim2.new(0, 0, 0, 0)
+    shine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    shine.BackgroundTransparency = 0.82
+    shine.BorderSizePixel = 0
+    shine.ZIndex = 3
+    shine.Parent = fill
+    uiCorner(shine, 10)
+
+    -- Health text label (center of bar)
+    local healthLbl = Instance.new("TextLabel")
+    healthLbl.Size = UDim2.new(1, 0, 1, 0)
+    healthLbl.BackgroundTransparency = 1
+    healthLbl.Text = "100 HP"
+    healthLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    healthLbl.Font = Enum.Font.GothamBold
+    healthLbl.TextSize = 13
+    healthLbl.ZIndex = 4
+    healthLbl.Parent = container
+
+    -- Low-health pulse overlay
+    local dangerOverlay = Instance.new("Frame")
+    dangerOverlay.Size = UDim2.new(1, 0, 1, 0)
+    dangerOverlay.BackgroundColor3 = Color3.fromRGB(255, 40, 40)
+    dangerOverlay.BackgroundTransparency = 1
+    dangerOverlay.BorderSizePixel = 0
+    dangerOverlay.ZIndex = 5
+    dangerOverlay.Parent = container
+    uiCorner(dangerOverlay, 14)
+
+    -- Animate fill bar width based on health
+    local lastHealth = humanoid.Health
+    local dangerPulseActive = false
+
+    local function updateBar(hp, maxHp)
+        local ratio = math.clamp(hp / math.max(maxHp, 1), 0, 1)
+        local targetColor
+
+        -- Color shift: green → yellow → red based on HP
+        if ColorStates.HealthBarRainbow then
+            -- rainbow handled by separate loop
+            targetColor = fill.BackgroundColor3
+        else
+            if ColorStates.HealthBarNeon then
+                targetColor = ColorStates.HealthBarColor
+            else
+                -- Gradient: 100% = user color, 0% = red
+                local r = ColorStates.HealthBarColor.R
+                local g = ColorStates.HealthBarColor.G
+                local b = ColorStates.HealthBarColor.B
+                targetColor = Color3.fromRGB(
+                    math.floor(r + (1 - ratio) * (220 - r)),
+                    math.floor(g * ratio),
+                    math.floor(b * ratio * 0.5)
+                )
+            end
+        end
+
+        -- Smooth fill tween
+        makeTween(fill, 0.35, {Size = UDim2.new(ratio, 0, 1, 0)}, Enum.EasingStyle.Quart):Play()
+        if not ColorStates.HealthBarRainbow then
+            makeTween(fill, 0.35, {BackgroundColor3 = targetColor}):Play()
+        end
+
+        healthLbl.Text = tostring(math.floor(hp)) .. " HP"
+
+        -- Low health pulse
+        if ratio <= 0.3 and not dangerPulseActive then
+            dangerPulseActive = true
+            coroutine.wrap(function()
+                while dangerPulseActive and Features.HealthBar do
+                    local hum = character:FindFirstChild("Humanoid")
+                    if not hum or hum.Health / hum.MaxHealth > 0.3 then
+                        dangerPulseActive = false
+                        makeTween(dangerOverlay, 0.3, {BackgroundTransparency = 1}):Play()
+                        break
+                    end
+                    makeTween(dangerOverlay, 0.4, {BackgroundTransparency = 0.75}):Play()
+                    wait(0.4)
+                    makeTween(dangerOverlay, 0.4, {BackgroundTransparency = 1}):Play()
+                    wait(0.4)
+                end
+            end)()
+        elseif ratio > 0.3 then
+            dangerPulseActive = false
+            makeTween(dangerOverlay, 0.3, {BackgroundTransparency = 1}):Play()
+        end
+
+        -- Heal flash (green shimmer when HP goes up)
+        if hp > lastHealth then
+            local flash = makeTween(shine, 0.15, {BackgroundTransparency = 0.5})
+            flash:Play()
+            flash.Completed:Connect(function()
+                makeTween(shine, 0.4, {BackgroundTransparency = 0.82}):Play()
+            end)
+        end
+        lastHealth = hp
+    end
+
+    -- Initial state
+    updateBar(humanoid.Health, humanoid.MaxHealth)
+
+    Connections.HealthBar = humanoid.HealthChanged:Connect(function(hp)
+        updateBar(hp, humanoid.MaxHealth)
+    end)
+
+    -- Rainbow loop for health bar
+    if ColorStates.HealthBarRainbow then
+        RainbowConns["healthbar"] = RunService.Heartbeat:Connect(function()
+            if not Features.HealthBar then stopRainbowKey("healthbar") return end
+            local c = Color3.fromHSV((tick() * 0.5) % 1, 1, 1)
+            fill.BackgroundColor3 = c
+        end)
+    end
+
+    -- Slide in animation
+    container.Position = UDim2.new(0.5, -160, 1, 10)
+    container.BackgroundTransparency = 1
+    makeTween(container, 0.5, {
+        Position = UDim2.new(0.5, -160, 1, -60),
+        BackgroundTransparency = 0,
+    }, Enum.EasingStyle.Back):Play()
+end
+
+local function toggleHealthBar(enabled)
+    if enabled then
+        createHealthBar()
+    else
+        -- Slide out before destroying
+        if HealthBarGui then
+            local container = HealthBarGui:FindFirstChild("Container")
+            if container then
+                local out = makeTween(container, 0.35, {
+                    Position = UDim2.new(0.5, -160, 1, 20),
+                    BackgroundTransparency = 1,
+                })
+                out:Play()
+                out.Completed:Connect(function() destroyHealthBar() end)
+            else
+                destroyHealthBar()
+            end
         end
     end
-    
-    -- Disable shadows
-    game.Lighting.GlobalShadows = false
-    game.Lighting.Brightness = 2
-    
-    -- Set all textures to lowest quality
-    for _, descendant in pairs(workspace:GetDescendants()) do
-        if descendant:IsA("Texture") then
-            descendant:Destroy()
+end
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- ── CROSSHAIR ─────────────────────────────────────────────────────────────────
+-- ══════════════════════════════════════════════════════════════════════════════
+local CrosshairGui = nil
+
+local function destroyCrosshair()
+    stopRainbowKey("crosshair")
+    if Connections.CrosshairSpin  then Connections.CrosshairSpin:Disconnect()  Connections.CrosshairSpin  = nil end
+    if CrosshairGui then CrosshairGui:Destroy() CrosshairGui = nil end
+end
+
+local function createCrosshair()
+    destroyCrosshair()
+
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "VenseCrosshair"; sg.ResetOnSpawn = false
+    sg.DisplayOrder = 10; sg.IgnoreGuiInset = true
+    sg.Parent = playerGui
+    CrosshairGui = sg
+
+    local col = ColorStates.CrosshairColor
+
+    -- Root frame — pinned to screen center
+    local root = Instance.new("Frame")
+    root.Name = "Root"
+    root.Size = UDim2.new(0, 60, 0, 60)
+    root.Position = UDim2.new(0.5, -30, 0.5, -30)
+    root.BackgroundTransparency = 1
+    root.BorderSizePixel = 0
+    root.Parent = sg
+
+    -- Center dot
+    local dot = Instance.new("Frame")
+    dot.Name = "Dot"
+    dot.Size = UDim2.new(0, 5, 0, 5)
+    dot.Position = UDim2.new(0.5, -2, 0.5, -2)
+    dot.BackgroundColor3 = col
+    dot.BorderSizePixel = 0
+    dot.Parent = root
+    uiCorner(dot, 3)
+
+    -- Four arms: Top, Bottom, Left, Right
+    local armDefs = {
+        { name = "Top",    size = UDim2.new(0, 2, 0, 14), pos = UDim2.new(0.5, -1, 0.5, -22) },
+        { name = "Bottom", size = UDim2.new(0, 2, 0, 14), pos = UDim2.new(0.5, -1, 0.5, 8)  },
+        { name = "Left",   size = UDim2.new(0, 14, 0, 2), pos = UDim2.new(0.5, -22, 0.5, -1) },
+        { name = "Right",  size = UDim2.new(0, 14, 0, 2), pos = UDim2.new(0.5, 8,  0.5, -1) },
+    }
+
+    local arms = {}
+    for _, def in ipairs(armDefs) do
+        local arm = Instance.new("Frame")
+        arm.Name = def.name
+        arm.Size = def.size
+        arm.Position = def.pos
+        arm.BackgroundColor3 = col
+        arm.BorderSizePixel = 0
+        arm.Parent = root
+        uiCorner(arm, 2)
+        arms[def.name] = arm
+    end
+
+    -- Outline frames for each arm (drawn slightly behind with dark color)
+    for _, def in ipairs(armDefs) do
+        local outline = Instance.new("Frame")
+        outline.Size = UDim2.new(1, 4, 1, 4)
+        outline.Position = UDim2.new(0, -2, 0, -2)
+        outline.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        outline.BackgroundTransparency = 0.5
+        outline.BorderSizePixel = 0
+        outline.ZIndex = arms[def.name].ZIndex - 1
+        outline.Parent = arms[def.name]
+        uiCorner(outline, 3)
+    end
+
+    -- Dot outline
+    local dotOutline = Instance.new("Frame")
+    dotOutline.Size = UDim2.new(1, 4, 1, 4)
+    dotOutline.Position = UDim2.new(0, -2, 0, -2)
+    dotOutline.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    dotOutline.BackgroundTransparency = 0.5
+    dotOutline.BorderSizePixel = 0
+    dotOutline.ZIndex = dot.ZIndex - 1
+    dotOutline.Parent = dot
+    uiCorner(dotOutline, 4)
+
+    -- Apply color to all crosshair parts
+    local function applyColor(c)
+        dot.BackgroundColor3 = c
+        for _, arm in pairs(arms) do
+            arm.BackgroundColor3 = c
+        end
+    end
+
+    -- Rainbow loop
+    if ColorStates.CrosshairRainbow then
+        RainbowConns["crosshair"] = RunService.Heartbeat:Connect(function()
+            if not Features.Crosshair then stopRainbowKey("crosshair") return end
+            applyColor(Color3.fromHSV((tick() * 0.6) % 1, 1, 1))
+        end)
+    else
+        applyColor(col)
+    end
+
+    -- Spin loop
+    if ColorStates.CrosshairSpin then
+        local angle = 0
+        Connections.CrosshairSpin = RunService.Heartbeat:Connect(function(dt)
+            if not Features.Crosshair then
+                if Connections.CrosshairSpin then Connections.CrosshairSpin:Disconnect() Connections.CrosshairSpin = nil end
+                return
+            end
+            angle = angle + dt * 180  -- 180°/sec
+            root.Rotation = angle % 360
+        end)
+    end
+
+    -- Fade in
+    root.GroupTransparency = 1  -- note: root is Frame, not CanvasGroup; use children
+    for _, child in pairs(root:GetChildren()) do
+        if child:IsA("Frame") then
+            child.BackgroundTransparency = 1
+        end
+    end
+    -- Fade in all parts
+    local function fadeInAll(toVal)
+        dot.BackgroundTransparency = toVal
+        dotOutline.BackgroundTransparency = math.clamp(toVal + 0.5, 0, 1)
+        for _, arm in pairs(arms) do
+            arm.BackgroundTransparency = toVal
+            local ol = arm:FindFirstChildWhichIsA("Frame")
+            if ol then ol.BackgroundTransparency = math.clamp(toVal + 0.5, 0, 1) end
+        end
+    end
+    fadeInAll(1)
+
+    -- Animate each piece in
+    local function animatePiece(frame, delay_)
+        task.delay(delay_, function()
+            makeTween(frame, 0.3, {BackgroundTransparency = 0}):Play()
+        end)
+    end
+    animatePiece(dot, 0)
+    animatePiece(arms.Top, 0.05)
+    animatePiece(arms.Bottom, 0.05)
+    animatePiece(arms.Left, 0.1)
+    animatePiece(arms.Right, 0.1)
+
+    return applyColor  -- expose for live color update
+end
+
+local function toggleCrosshair(enabled)
+    if enabled then
+        createCrosshair()
+    else
+        -- Fade out then destroy
+        if CrosshairGui then
+            local root = CrosshairGui:FindFirstChild("Root")
+            if root then
+                for _, c in pairs(root:GetChildren()) do
+                    if c:IsA("Frame") then
+                        makeTween(c, 0.25, {BackgroundTransparency = 1}):Play()
+                    end
+                end
+            end
+            task.delay(0.3, function() destroyCrosshair() end)
         end
     end
 end
 
--- Revert FPS Boost
-local function revertFPSBoost()
-    game.Lighting.GlobalShadows = true
-    game.Lighting.Brightness = 1
+-- ══════════════════════════════════════════════════════════════════════════════
+-- ── GENERIC COLOR PICKER POPUP ────────────────────────────────────────────────
+-- ══════════════════════════════════════════════════════════════════════════════
+local function createColorPicker(title, guiName, onSelect, extraOptions)
+    if playerGui:FindFirstChild(guiName) then
+        playerGui[guiName]:Destroy()
+        return
+    end
+
+    local sg = Instance.new("ScreenGui")
+    sg.Name = guiName; sg.ResetOnSpawn = false; sg.DisplayOrder = 20
+    sg.Parent = playerGui
+
+    -- Determine height: base + extra rows if spin toggle present
+    local extraH = extraOptions and 50 or 0
+    local H = 240 + extraH
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 0, 0, 0)
+    frame.Position = UDim2.new(0.5, 0, 0.5, 0)
+    frame.BackgroundColor3 = Config.MainColor
+    frame.BorderSizePixel = 0
+    frame.Parent = sg
+    uiCorner(frame, 12)
+
+    -- Animate pop-in
+    makeTween(frame, 0.3, {
+        Size     = UDim2.new(0, 340, 0, H),
+        Position = UDim2.new(0.5, -170, 0.5, -H/2),
+    }, Enum.EasingStyle.Back):Play()
+
+    local titleBar = Instance.new("Frame")
+    titleBar.Size = UDim2.new(1, 0, 0, 44)
+    titleBar.BackgroundColor3 = Config.AccentColor
+    titleBar.BorderSizePixel = 0
+    titleBar.Parent = frame
+    uiCorner(titleBar, 12)
+
+    local titleLbl = Instance.new("TextLabel")
+    titleLbl.Size = UDim2.new(1, -50, 1, 0)
+    titleLbl.Position = UDim2.new(0, 14, 0, 0)
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Text = title
+    titleLbl.TextColor3 = Config.TextColor
+    titleLbl.Font = Enum.Font.GothamBold
+    titleLbl.TextSize = 16
+    titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+    titleLbl.Parent = titleBar
+
+    local closeX = Instance.new("TextButton")
+    closeX.Size = UDim2.new(0, 36, 0, 36)
+    closeX.Position = UDim2.new(1, -40, 0, 4)
+    closeX.BackgroundColor3 = Config.DarkColor
+    closeX.TextColor3 = Config.TextColor
+    closeX.Text = "x"; closeX.TextSize = 18
+    closeX.Font = Enum.Font.GothamBold; closeX.BorderSizePixel = 0
+    closeX.Parent = titleBar
+    uiCorner(closeX, 6)
+    closeX.MouseButton1Click:Connect(function() sg:Destroy() end)
+
+    -- Color grid
+    local grid = Instance.new("Frame")
+    grid.Size = UDim2.new(1, -24, 0, 130)
+    grid.Position = UDim2.new(0, 12, 0, 54)
+    grid.BackgroundTransparency = 1
+    grid.Parent = frame
+
+    local gridLayout = Instance.new("UIGridLayout")
+    gridLayout.CellSize = UDim2.new(0, 66, 0, 40)
+    gridLayout.CellPadding = UDim2.new(0, 8, 0, 8)
+    gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    gridLayout.Parent = grid
+
+    local selectedBtn = nil
+    for i, preset in ipairs(PRESETS) do
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0, 66, 0, 40)
+        btn.BackgroundColor3 = preset.rainbow and Color3.fromRGB(255, 80, 80) or preset.color
+        btn.BorderSizePixel = 0
+        btn.Text = preset.name
+        btn.TextColor3 = (preset.name == "white" or preset.name == "yellow")
+            and Color3.fromRGB(30,30,30) or Color3.fromRGB(255,255,255)
+        btn.TextSize = 11; btn.Font = Enum.Font.GothamBold
+        btn.LayoutOrder = i; btn.Parent = grid
+        uiCorner(btn, 7)
+
+        if preset.rainbow then
+            coroutine.wrap(function()
+                while btn.Parent do
+                    btn.BackgroundColor3 = Color3.fromHSV((tick() * 0.5) % 1, 1, 1)
+                    RunService.Heartbeat:Wait()
+                end
+            end)()
+        end
+
+        btn.MouseButton1Click:Connect(function()
+            if selectedBtn then selectedBtn.BorderSizePixel = 0 end
+            btn.BorderSizePixel = 2; selectedBtn = btn
+            onSelect(preset)
+        end)
+        btn.MouseEnter:Connect(function() makeTween(btn, 0.12, {Size = UDim2.new(0, 70, 0, 44)}):Play() end)
+        btn.MouseLeave:Connect(function() makeTween(btn, 0.12, {Size = UDim2.new(0, 66, 0, 40)}):Play() end)
+    end
+
+    -- Extra options (e.g. Spin toggle for crosshair)
+    if extraOptions then
+        for _, opt in ipairs(extraOptions) do
+            local optBtn = Instance.new("TextButton")
+            optBtn.Size = UDim2.new(1, -24, 0, 36)
+            optBtn.Position = UDim2.new(0, 12, 0, 194)
+            optBtn.BackgroundColor3 = opt.active() and Config.OnColor or Color3.fromRGB(200, 80, 80)
+            optBtn.TextColor3 = Config.TextColor
+            optBtn.Text = opt.label .. (opt.active() and ": ON" or ": OFF")
+            optBtn.Font = Enum.Font.GothamBold
+            optBtn.TextSize = 13; optBtn.BorderSizePixel = 0
+            optBtn.Parent = frame
+            uiCorner(optBtn, 8)
+            optBtn.MouseButton1Click:Connect(function()
+                opt.toggle()
+                optBtn.Text = opt.label .. (opt.active() and ": ON" or ": OFF")
+                makeTween(optBtn, 0.2, {
+                    BackgroundColor3 = opt.active() and Config.OnColor or Color3.fromRGB(200, 80, 80)
+                }):Play()
+            end)
+        end
+    end
+
+    local doneBtn = Instance.new("TextButton")
+    doneBtn.Size = UDim2.new(1, -24, 0, 34)
+    doneBtn.Position = UDim2.new(0, 12, 1, -46)
+    doneBtn.BackgroundColor3 = Config.AccentColor
+    doneBtn.TextColor3 = Config.TextColor
+    doneBtn.Text = "done"; doneBtn.Font = Enum.Font.GothamBold
+    doneBtn.TextSize = 14; doneBtn.BorderSizePixel = 0
+    doneBtn.Parent = frame
+    uiCorner(doneBtn, 8)
+    doneBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
 end
 
--- Create Main GUI
-local function createMainGui()
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "VenseGui"
-    screenGui.ResetOnSpawn = false
-    screenGui.Parent = playerGui
+-- ── Specific picker launchers ─────────────────────────────────────────────────
+local function openHatPicker()
+    createColorPicker("hat color", "HatColorPicker", function(preset)
+        ColorStates.ChinaHatColor   = preset.color
+        ColorStates.ChinaHatNeon    = preset.neon
+        ColorStates.ChinaHatRainbow = preset.rainbow
+        stopRainbowKey("hat")
+        if Features.ChinaHat then
+            applyHatColor(preset.color, preset.neon, preset.rainbow)
+            if preset.rainbow then startHatRainbow() end
+        end
+    end, nil)
+end
 
-    -- Main Frame
+local function openHealthBarPicker()
+    createColorPicker("health bar color", "HealthBarColorPicker", function(preset)
+        ColorStates.HealthBarColor   = preset.color
+        ColorStates.HealthBarNeon    = preset.neon
+        ColorStates.HealthBarRainbow = preset.rainbow
+        stopRainbowKey("healthbar")
+        if Features.HealthBar then
+            -- Rebuild with new color
+            createHealthBar()
+        end
+    end, nil)
+end
+
+local function openCrosshairPicker()
+    createColorPicker("crosshair color", "CrosshairColorPicker", function(preset)
+        ColorStates.CrosshairColor   = preset.color
+        ColorStates.CrosshairNeon    = preset.neon
+        ColorStates.CrosshairRainbow = preset.rainbow
+        stopRainbowKey("crosshair")
+        if Features.Crosshair then createCrosshair() end
+    end, {
+        {
+            label  = "⟳ spin",
+            active = function() return ColorStates.CrosshairSpin end,
+            toggle = function()
+                ColorStates.CrosshairSpin = not ColorStates.CrosshairSpin
+                if Features.Crosshair then createCrosshair() end
+            end,
+        }
+    })
+end
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- ── MAIN GUI ──────────────────────────────────────────────────────────────────
+-- ══════════════════════════════════════════════════════════════════════════════
+local function createMainGui(fromMinimized, minimizedScreenGui, minimizedBtn)
+    if playerGui:FindFirstChild("VenseMinimized") then
+        playerGui.VenseMinimized:Destroy()
+    end
+
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "VenseGui"; sg.ResetOnSpawn = false; sg.Parent = playerGui
+
+    local canvas = Instance.new("CanvasGroup")
+    canvas.Name = "Canvas"
+    canvas.Size = UDim2.new(0, 320, 0, 400)
+    canvas.Position = UDim2.new(0.5, -160, 0.5, -200)
+    canvas.BackgroundTransparency = 1
+    canvas.BorderSizePixel = 0
+    canvas.GroupTransparency = 1
+    canvas.Parent = sg
+
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 380, 0, 500)
-    mainFrame.Position = UDim2.new(0.5, -190, 0.5, -250)
+    mainFrame.Size = UDim2.new(1, 0, 1, 0)
     mainFrame.BackgroundColor3 = Config.MainColor
     mainFrame.BorderSizePixel = 0
-    mainFrame.Parent = screenGui
+    mainFrame.Active = true
+    mainFrame.Parent = canvas
+    uiCorner(mainFrame, 12)
 
-    -- Add corner radius
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 12)
-    corner.Parent = mainFrame
+    -- Open animation
+    if fromMinimized and minimizedBtn then
+        local vp = minimizedBtn.AbsolutePosition
+        local vs = minimizedBtn.AbsoluteSize
+        canvas.Size     = UDim2.new(0, vs.X, 0, vs.Y)
+        canvas.Position = UDim2.new(0, vp.X, 0, vp.Y)
+        canvas.GroupTransparency = 1
+        if minimizedScreenGui then minimizedScreenGui:Destroy() end
+
+        TweenService:Create(canvas, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+            {Size = UDim2.new(0, 320, 0, 400), Position = UDim2.new(0.5, -160, 0.5, -200)}):Play()
+        TweenService:Create(canvas, TweenInfo.new(0.25, Enum.EasingStyle.Linear),
+            {GroupTransparency = 0}):Play()
+    else
+        canvas.Position = UDim2.new(0.5, -160, 0.5, -220)
+        canvas.GroupTransparency = 1
+        TweenService:Create(canvas, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {Position = UDim2.new(0.5, -160, 0.5, -200)}):Play()
+        TweenService:Create(canvas, TweenInfo.new(0.35, Enum.EasingStyle.Linear),
+            {GroupTransparency = 0}):Play()
+    end
 
     -- Title Bar
     local titleBar = Instance.new("Frame")
-    titleBar.Name = "TitleBar"
     titleBar.Size = UDim2.new(1, 0, 0, 50)
     titleBar.BackgroundColor3 = Config.AccentColor
-    titleBar.BorderSizePixel = 0
-    titleBar.Parent = mainFrame
+    titleBar.BorderSizePixel = 0; titleBar.Parent = mainFrame
+    uiCorner(titleBar, 12)
 
-    local titleCorner = Instance.new("UICorner")
-    titleCorner.CornerRadius = UDim.new(0, 12)
-    titleCorner.Parent = titleBar
+    local titleLbl = Instance.new("TextLabel")
+    titleLbl.Size = UDim2.new(1, -60, 1, 0); titleLbl.Position = UDim2.new(0, 14, 0, 0)
+    titleLbl.BackgroundTransparency = 1; titleLbl.Text = "$vense.lua$"
+    titleLbl.TextColor3 = Config.TextColor; titleLbl.TextSize = 17
+    titleLbl.Font = Enum.Font.GothamBold; titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+    titleLbl.Parent = titleBar
 
-    local titleText = Instance.new("TextLabel")
-    titleText.Size = UDim2.new(1, -60, 1, 0)
-    titleText.Position = UDim2.new(0, 10, 0, 0)
-    titleText.BackgroundTransparency = 1
-    titleText.Text = "VENSE"
-    titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    titleText.TextSize = 20
-    titleText.Font = Enum.Font.GothamBold
-    titleText.TextXAlignment = Enum.TextXAlignment.Left
-    titleText.Parent = titleBar
-
-    -- Close Button
     local closeBtn = Instance.new("TextButton")
-    closeBtn.Name = "CloseBtn"
-    closeBtn.Size = UDim2.new(0, 40, 0, 40)
-    closeBtn.Position = UDim2.new(1, -45, 0, 5)
-    closeBtn.BackgroundColor3 = Config.DarkColor
-    closeBtn.TextColor3 = Config.TextColor
-    closeBtn.Text = "×"
-    closeBtn.TextSize = 24
-    closeBtn.Font = Enum.Font.GothamBold
-    closeBtn.BorderSizePixel = 0
-    closeBtn.Parent = titleBar
+    closeBtn.Size = UDim2.new(0, 40, 0, 40); closeBtn.Position = UDim2.new(1, -45, 0, 5)
+    closeBtn.BackgroundColor3 = Config.DarkColor; closeBtn.TextColor3 = Config.TextColor
+    closeBtn.Text = "—"; closeBtn.TextSize = 18; closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.BorderSizePixel = 0; closeBtn.Parent = titleBar
+    uiCorner(closeBtn, 8)
 
-    local closeBtnCorner = Instance.new("UICorner")
-    closeBtnCorner.CornerRadius = UDim.new(0, 8)
-    closeBtnCorner.Parent = closeBtn
+    -- Scrollable content
+    local scrollFrame = Instance.new("ScrollingFrame")
+    scrollFrame.Size = UDim2.new(1, 0, 1, -50)
+    scrollFrame.Position = UDim2.new(0, 0, 0, 50)
+    scrollFrame.BackgroundTransparency = 1
+    scrollFrame.BorderSizePixel = 0
+    scrollFrame.ScrollBarThickness = 3
+    scrollFrame.ScrollBarImageColor3 = Config.AccentColor
+    scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)  -- auto via layout
+    scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scrollFrame.Parent = mainFrame
 
-    -- Content Frame
-    local contentFrame = Instance.new("Frame")
-    contentFrame.Name = "Content"
-    contentFrame.Size = UDim2.new(1, 0, 1, -50)
-    contentFrame.Position = UDim2.new(0, 0, 0, 50)
-    contentFrame.BackgroundTransparency = 1
-    contentFrame.BorderSizePixel = 0
-    contentFrame.Parent = mainFrame
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft = UDim.new(0, 15); pad.PaddingRight  = UDim.new(0, 15)
+    pad.PaddingTop  = UDim.new(0, 15); pad.PaddingBottom = UDim.new(0, 15)
+    pad.Parent = scrollFrame
 
-    local contentPadding = Instance.new("UIPadding")
-    contentPadding.PaddingLeft = UDim.new(0, 15)
-    contentPadding.PaddingRight = UDim.new(0, 15)
-    contentPadding.PaddingTop = UDim.new(0, 15)
-    contentPadding.PaddingBottom = UDim.new(0, 15)
-    contentPadding.Parent = contentFrame
-
-    -- List Layout
     local listLayout = Instance.new("UIListLayout")
     listLayout.Padding = UDim.new(0, 12)
     listLayout.FillDirection = Enum.FillDirection.Vertical
     listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    listLayout.Parent = contentFrame
+    listLayout.Parent = scrollFrame
 
-    -- Feature Button Creator with Toggle Indicator
-    local featureButtons = {}
-    
-    local function createFeatureButton(name, description, featureKey, callback)
-        local button = Instance.new("TextButton")
-        button.Name = name
-        button.Size = UDim2.new(1, 0, 0, 70)
-        button.BackgroundColor3 = Config.DarkColor
-        button.BorderSizePixel = 0
-        button.TextTransparency = 1
-        button.Parent = contentFrame
+    -- ── Section label ─────────────────────────────────────────────────────────
+    local function sectionLabel(text)
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, 0, 0, 18)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = text
+        lbl.TextColor3 = Color3.fromRGB(120, 120, 130)
+        lbl.TextSize = 11
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = scrollFrame
+    end
 
-        local buttonCorner = Instance.new("UICorner")
-        buttonCorner.CornerRadius = UDim.new(0, 8)
-        buttonCorner.Parent = button
+    -- ── Simple toggle button ──────────────────────────────────────────────────
+    local function makeFeatureBtn(name, desc, featureKey, cb)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 0, 70)
+        btn.BackgroundColor3 = Config.DarkColor
+        btn.BorderSizePixel = 0; btn.TextTransparency = 1
+        btn.Parent = scrollFrame
+        uiCorner(btn, 8)
 
-        local buttonPadding = Instance.new("UIPadding")
-        buttonPadding.PaddingLeft = UDim.new(0, 12)
-        buttonPadding.PaddingRight = UDim.new(0, 12)
-        buttonPadding.PaddingTop = UDim.new(0, 8)
-        buttonPadding.PaddingBottom = UDim.new(0, 8)
-        buttonPadding.Parent = button
+        local bp = Instance.new("UIPadding")
+        bp.PaddingLeft = UDim.new(0,12); bp.PaddingRight  = UDim.new(0,12)
+        bp.PaddingTop  = UDim.new(0,8);  bp.PaddingBottom = UDim.new(0,8)
+        bp.Parent = btn
 
-        local buttonLayout = Instance.new("UIListLayout")
-        buttonLayout.FillDirection = Enum.FillDirection.Horizontal
-        buttonLayout.SortOrder = Enum.SortOrder.LayoutOrder
-        buttonLayout.Parent = button
+        local hl = Instance.new("UIListLayout")
+        hl.FillDirection = Enum.FillDirection.Horizontal
+        hl.SortOrder = Enum.SortOrder.LayoutOrder; hl.Parent = btn
 
-        -- Left container for text
-        local textContainer = Instance.new("Frame")
-        textContainer.Size = UDim2.new(0.85, 0, 1, 0)
-        textContainer.BackgroundTransparency = 1
-        textContainer.BorderSizePixel = 0
-        textContainer.LayoutOrder = 1
-        textContainer.Parent = button
+        local textBox = Instance.new("Frame")
+        textBox.Size = UDim2.new(0.82, 0, 1, 0)
+        textBox.BackgroundTransparency = 1; textBox.LayoutOrder = 1; textBox.Parent = btn
+        local vl = Instance.new("UIListLayout")
+        vl.FillDirection = Enum.FillDirection.Vertical
+        vl.SortOrder = Enum.SortOrder.LayoutOrder; vl.Parent = textBox
 
-        local textLayout = Instance.new("UIListLayout")
-        textLayout.FillDirection = Enum.FillDirection.Vertical
-        textLayout.SortOrder = Enum.SortOrder.LayoutOrder
-        textLayout.Parent = textContainer
+        local nameLbl = Instance.new("TextLabel")
+        nameLbl.Size = UDim2.new(1, 0, 0, 25); nameLbl.BackgroundTransparency = 1
+        nameLbl.Text = name; nameLbl.TextColor3 = Config.AccentColor
+        nameLbl.TextSize = 16; nameLbl.Font = Enum.Font.GothamBold
+        nameLbl.TextXAlignment = Enum.TextXAlignment.Left; nameLbl.LayoutOrder = 1; nameLbl.Parent = textBox
 
-        local nameText = Instance.new("TextLabel")
-        nameText.Size = UDim2.new(1, 0, 0, 25)
-        nameText.BackgroundTransparency = 1
-        nameText.Text = name
-        nameText.TextColor3 = Config.AccentColor
-        nameText.TextSize = 16
-        nameText.Font = Enum.Font.GothamBold
-        nameText.TextXAlignment = Enum.TextXAlignment.Left
-        nameText.LayoutOrder = 1
-        nameText.Parent = textContainer
+        local descLbl = Instance.new("TextLabel")
+        descLbl.Size = UDim2.new(1, 0, 0, 35); descLbl.BackgroundTransparency = 1
+        descLbl.Text = desc; descLbl.TextColor3 = Color3.fromRGB(170, 170, 175)
+        descLbl.TextSize = 11; descLbl.Font = Enum.Font.Gotham
+        descLbl.TextXAlignment = Enum.TextXAlignment.Left; descLbl.TextWrapped = true
+        descLbl.LayoutOrder = 2; descLbl.Parent = textBox
 
-        local descText = Instance.new("TextLabel")
-        descText.Size = UDim2.new(1, 0, 0, 35)
-        descText.BackgroundTransparency = 1
-        descText.Text = description
-        descText.TextColor3 = Color3.fromRGB(180, 180, 180)
-        descText.TextSize = 11
-        descText.Font = Enum.Font.Gotham
-        descText.TextXAlignment = Enum.TextXAlignment.Left
-        descText.TextWrapped = true
-        descText.LayoutOrder = 2
-        descText.Parent = textContainer
+        local indicator = Instance.new("TextLabel")
+        indicator.Size = UDim2.new(0, 50, 1, 0); indicator.BackgroundTransparency = 1
+        indicator.Text = "off"; indicator.TextColor3 = Color3.fromRGB(200, 80, 80)
+        indicator.TextSize = 14; indicator.Font = Enum.Font.GothamBold
+        indicator.LayoutOrder = 2; indicator.Parent = btn
 
-        -- Toggle Indicator
-        local toggleIndicator = Instance.new("TextLabel")
-        toggleIndicator.Size = UDim2.new(0, 50, 1, 0)
-        toggleIndicator.BackgroundTransparency = 1
-        toggleIndicator.Text = "OFF"
-        toggleIndicator.TextColor3 = Color3.fromRGB(200, 80, 80)
-        toggleIndicator.TextSize = 14
-        toggleIndicator.Font = Enum.Font.GothamBold
-        toggleIndicator.LayoutOrder = 2
-        toggleIndicator.Parent = button
-
-        featureButtons[name] = {button = button, indicator = toggleIndicator}
-
-        button.MouseButton1Click:Connect(function()
+        btn.MouseButton1Click:Connect(function()
             Features[featureKey] = not Features[featureKey]
-            
             if Features[featureKey] then
-                toggleIndicator.Text = "ON"
-                toggleIndicator.TextColor3 = Config.OnColor
+                indicator.Text = "on"; indicator.TextColor3 = Config.OnColor
             else
-                toggleIndicator.Text = "OFF"
-                toggleIndicator.TextColor3 = Color3.fromRGB(200, 80, 80)
+                indicator.Text = "off"; indicator.TextColor3 = Color3.fromRGB(200, 80, 80)
             end
-            
-            callback(Features[featureKey])
+            cb(Features[featureKey])
         end)
-        
-        -- Hover Effect
-        button.MouseEnter:Connect(function()
-            local TweenService = game:GetService("TweenService")
-            TweenService:Create(
-                button,
-                TweenInfo.new(0.2),
-                {BackgroundColor3 = Color3.fromRGB(35, 35, 45)}
-            ):Play()
-        end)
-
-        button.MouseLeave:Connect(function()
-            local TweenService = game:GetService("TweenService")
-            TweenService:Create(
-                button,
-                TweenInfo.new(0.2),
-                {BackgroundColor3 = Config.DarkColor}
-            ):Play()
-        end)
-
-        return button
+        btn.MouseEnter:Connect(function() makeTween(btn, 0.18, {BackgroundColor3 = Color3.fromRGB(38,38,48)}):Play() end)
+        btn.MouseLeave:Connect(function() makeTween(btn, 0.18, {BackgroundColor3 = Config.DarkColor}):Play() end)
     end
 
-    -- Noclip Feature
-    createFeatureButton("NOCLIP", "Walk through walls", "Noclip", function(enabled)
-        if enabled then
-            local noclipConnection
-            noclipConnection = RunService.Stepped:Connect(function()
-                if not Features.Noclip or not character:FindFirstChild("HumanoidRootPart") then
-                    if noclipConnection then noclipConnection:Disconnect() end
-                    return
-                end
-                for _, part in pairs(character:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.CanCollide = false
-                    end
-                end
-            end)
-        end
-    end)
+    -- ── Toggle + COLOR button row ─────────────────────────────────────────────
+    local function makeColorFeatureBtn(name, desc, featureKey, cb, colorPickerFn)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 0, 70)
+        btn.BackgroundColor3 = Config.DarkColor
+        btn.BorderSizePixel = 0; btn.TextTransparency = 1
+        btn.Parent = scrollFrame
+        uiCorner(btn, 8)
 
-    -- Infinite Jump Feature
-    createFeatureButton("INFINITE JUMP", "Jump infinitely without limit", "InfiniteJump", function(enabled)
-        if enabled then
-            local jumpConnection
-            jumpConnection = UserInputService.JumpRequest:Connect(function()
-                if Features.InfiniteJump and character:FindFirstChild("Humanoid") then
-                    character:FindFirstChild("Humanoid"):ChangeState(Enum.HumanoidStateType.Jumping)
-                end
-            end)
-        end
-    end)
+        local bp = Instance.new("UIPadding")
+        bp.PaddingLeft = UDim.new(0,12); bp.PaddingRight  = UDim.new(0,12)
+        bp.PaddingTop  = UDim.new(0,8);  bp.PaddingBottom = UDim.new(0,8)
+        bp.Parent = btn
 
-    -- China Hat Feature
-    createFeatureButton("CHINA HAT", "Wear a customizable china hat", "ChinaHat", function(enabled)
-        if enabled then
-            createChinaHat()
-            createColorPicker("CHINA HAT COLOR", ColorStates.ChinaHatColor, function(color)
-                ColorStates.ChinaHatColor = color
-                if character:FindFirstChild("ChinaHat") then
-                    character:FindFirstChild("ChinaHat"):Destroy()
-                end
-                createChinaHat()
-            end)
-        else
-            removeChinaHat()
-        end
-    end)
+        local hl = Instance.new("UIListLayout")
+        hl.FillDirection = Enum.FillDirection.Horizontal
+        hl.SortOrder = Enum.SortOrder.LayoutOrder; hl.Parent = btn
 
-    -- Boost FPS Feature
-    createFeatureButton("BOOST FPS", "Lower all textures for better performance", "BoostFPS", function(enabled)
-        if enabled then
-            boostFPS()
-        else
-            revertFPSBoost()
-        end
-    end)
+        local textBox = Instance.new("Frame")
+        textBox.Size = UDim2.new(0.60, 0, 1, 0)
+        textBox.BackgroundTransparency = 1; textBox.LayoutOrder = 1; textBox.Parent = btn
+        local vl = Instance.new("UIListLayout")
+        vl.FillDirection = Enum.FillDirection.Vertical; vl.SortOrder = Enum.SortOrder.LayoutOrder; vl.Parent = textBox
 
-    -- Model Changer Feature
-    local function createModelChanger()
-        local modelGui = Instance.new("Frame")
-        modelGui.Name = "ModelChanger"
-        modelGui.Size = UDim2.new(1, 0, 1, -50)
-        modelGui.Position = UDim2.new(0, 0, 0, 50)
-        modelGui.BackgroundTransparency = 1
-        modelGui.BorderSizePixel = 0
-        modelGui.Parent = mainFrame
+        local nameLbl = Instance.new("TextLabel")
+        nameLbl.Size = UDim2.new(1,0,0,25); nameLbl.BackgroundTransparency = 1
+        nameLbl.Text = name; nameLbl.TextColor3 = Config.AccentColor
+        nameLbl.TextSize = 16; nameLbl.Font = Enum.Font.GothamBold
+        nameLbl.TextXAlignment = Enum.TextXAlignment.Left; nameLbl.LayoutOrder = 1; nameLbl.Parent = textBox
 
-        local modelPadding = Instance.new("UIPadding")
-        modelPadding.PaddingLeft = UDim.new(0, 15)
-        modelPadding.PaddingRight = UDim.new(0, 15)
-        modelPadding.PaddingTop = UDim.new(0, 15)
-        modelPadding.PaddingBottom = UDim.new(0, 15)
-        modelPadding.Parent = modelGui
+        local descLbl = Instance.new("TextLabel")
+        descLbl.Size = UDim2.new(1,0,0,35); descLbl.BackgroundTransparency = 1
+        descLbl.Text = desc; descLbl.TextColor3 = Color3.fromRGB(170,170,175)
+        descLbl.TextSize = 11; descLbl.Font = Enum.Font.Gotham
+        descLbl.TextXAlignment = Enum.TextXAlignment.Left; descLbl.TextWrapped = true
+        descLbl.LayoutOrder = 2; descLbl.Parent = textBox
 
-        local modelLayout = Instance.new("UIListLayout")
-        modelLayout.Padding = UDim.new(0, 10)
-        modelLayout.FillDirection = Enum.FillDirection.Vertical
-        modelLayout.SortOrder = Enum.SortOrder.LayoutOrder
-        modelLayout.Parent = modelGui
+        local rightSide = Instance.new("Frame")
+        rightSide.Size = UDim2.new(0.40, 0, 1, 0)
+        rightSide.BackgroundTransparency = 1; rightSide.LayoutOrder = 2; rightSide.Parent = btn
 
-        -- Model preview showing current color
-        local previewLabel = Instance.new("TextLabel")
-        previewLabel.Size = UDim2.new(1, 0, 0, 40)
-        previewLabel.BackgroundColor3 = ColorStates.ModelColor
-        previewLabel.BorderSizePixel = 0
-        previewLabel.Text = "Current Color"
-        previewLabel.TextColor3 = Config.TextColor
-        previewLabel.Font = Enum.Font.GothamBold
-        previewLabel.Parent = modelGui
+        local rightLayout = Instance.new("UIListLayout")
+        rightLayout.FillDirection = Enum.FillDirection.Horizontal
+        rightLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+        rightLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+        rightLayout.Padding = UDim.new(0, 6); rightLayout.Parent = rightSide
 
-        local previewCorner = Instance.new("UICorner")
-        previewCorner.CornerRadius = UDim.new(0, 8)
-        previewCorner.Parent = previewLabel
-
-        local function createModelOption(modelName, modelType)
-            local optionBtn = Instance.new("TextButton")
-            optionBtn.Size = UDim2.new(1, 0, 0, 50)
-            optionBtn.BackgroundColor3 = Config.DarkColor
-            optionBtn.TextColor3 = Config.TextColor
-            optionBtn.Text = modelName
-            optionBtn.Font = Enum.Font.GothamBold
-            optionBtn.TextSize = 14
-            optionBtn.BorderSizePixel = 0
-            optionBtn.Parent = modelGui
-
-            local optionCorner = Instance.new("UICorner")
-            optionCorner.CornerRadius = UDim.new(0, 8)
-            optionCorner.Parent = optionBtn
-
-            optionBtn.MouseButton1Click:Connect(function()
-                -- Change character appearance
-                if character:FindFirstChild("HumanoidRootPart") then
-                    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-                    
-                    -- Remove all body parts except humanoid
-                    for _, part in pairs(character:GetChildren()) do
-                        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                            part:Destroy()
-                        end
-                    end
-
-                    -- Create new model
-                    local newPart = Instance.new("Part")
-                    newPart.Shape = (modelType == "Ball" and Enum.PartType.Ball) or 
-                                   (modelType == "Block" and Enum.PartType.Block) or 
-                                   Enum.PartType.Block
-                    
-                    if modelType == "Triangle" then
-                        -- Create triangle effect with rotation
-                        newPart.Shape = Enum.PartType.Block
-                        newPart.Size = Vector3.new(2, 2, 0.5)
-                    else
-                        newPart.Size = Vector3.new(2, 2, 2)
-                    end
-                    
-                    newPart.Color = ColorStates.ModelColor
-                    newPart.Material = ColorStates.ModelNeon and Enum.Material.Neon or Enum.Material.SmoothPlastic
-                    newPart.CanCollide = false
-                    newPart.TopSurface = Enum.SurfaceType.Smooth
-                    newPart.BottomSurface = Enum.SurfaceType.Smooth
-                    newPart.Parent = character
-
-                    -- Weld to HumanoidRootPart
-                    local weld = Instance.new("WeldConstraint")
-                    weld.Part0 = humanoidRootPart
-                    weld.Part1 = newPart
-                    weld.Parent = newPart
-                end
-
-                contentFrame.Visible = true
-                titleBar.Visible = true
-                modelGui:Destroy()
-            end)
-
-            optionBtn.MouseEnter:Connect(function()
-                local TweenService = game:GetService("TweenService")
-                TweenService:Create(optionBtn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(35, 35, 45)}):Play()
-            end)
-
-            optionBtn.MouseLeave:Connect(function()
-                local TweenService = game:GetService("TweenService")
-                TweenService:Create(optionBtn, TweenInfo.new(0.2), {BackgroundColor3 = Config.DarkColor}):Play()
-            end)
-        end
-
-        -- Color customization buttons
         local colorBtn = Instance.new("TextButton")
-        colorBtn.Size = UDim2.new(1, 0, 0, 40)
-        colorBtn.BackgroundColor3 = Config.AccentColor
-        colorBtn.TextColor3 = Config.TextColor
-        colorBtn.Text = "CUSTOMIZE COLOR"
-        colorBtn.Font = Enum.Font.GothamBold
-        colorBtn.BorderSizePixel = 0
-        colorBtn.Parent = modelGui
+        colorBtn.Size = UDim2.new(0, 52, 0, 28)
+        colorBtn.BackgroundColor3 = Config.AccentColor; colorBtn.TextColor3 = Config.TextColor
+        colorBtn.Text = "color"; colorBtn.TextSize = 10; colorBtn.Font = Enum.Font.GothamBold
+        colorBtn.BorderSizePixel = 0; colorBtn.LayoutOrder = 1; colorBtn.Parent = rightSide
+        uiCorner(colorBtn, 6)
 
-        local colorBtnCorner = Instance.new("UICorner")
-        colorBtnCorner.CornerRadius = UDim.new(0, 8)
-        colorBtnCorner.Parent = colorBtn
+        local indicator = Instance.new("TextLabel")
+        indicator.Size = UDim2.new(0, 36, 0, 28); indicator.BackgroundTransparency = 1
+        indicator.Text = "off"; indicator.TextColor3 = Color3.fromRGB(200, 80, 80)
+        indicator.TextSize = 13; indicator.Font = Enum.Font.GothamBold
+        indicator.LayoutOrder = 2; indicator.Parent = rightSide
 
-        colorBtn.MouseButton1Click:Connect(function()
-            createColorPicker("MODEL COLOR", ColorStates.ModelColor, function(color)
-                ColorStates.ModelColor = color
-                previewLabel.BackgroundColor3 = color
+        colorBtn.MouseButton1Click:Connect(colorPickerFn)
+        btn.MouseButton1Click:Connect(function()
+            Features[featureKey] = not Features[featureKey]
+            if Features[featureKey] then
+                indicator.Text = "on"; indicator.TextColor3 = Config.OnColor
+            else
+                indicator.Text = "off"; indicator.TextColor3 = Color3.fromRGB(200, 80, 80)
+            end
+            cb(Features[featureKey])
+        end)
+        btn.MouseEnter:Connect(function() makeTween(btn, 0.18, {BackgroundColor3 = Color3.fromRGB(38,38,48)}):Play() end)
+        btn.MouseLeave:Connect(function() makeTween(btn, 0.18, {BackgroundColor3 = Config.DarkColor}):Play() end)
+    end
+
+    -- ── Build buttons ─────────────────────────────────────────────────────────
+    sectionLabel("  cheats")
+    makeFeatureBtn("noclip", "walk through walls and objects", "Noclip", toggleNoclip)
+    makeFeatureBtn("infinite jump", "jump infinitely without limit", "InfiniteJump", toggleInfiniteJump)
+
+    sectionLabel("  visuals")
+    makeColorFeatureBtn("china hat", "rice hat on your head", "ChinaHat", function(enabled)
+        if enabled then createChinaHat() else removeChinaHat() end
+    end, openHatPicker)
+    makeColorFeatureBtn("health bar", "animated hp bar at bottom of screen", "HealthBar", toggleHealthBar, openHealthBarPicker)
+    makeColorFeatureBtn("crosshair", "custom crosshair with spin option", "Crosshair", toggleCrosshair, openCrosshairPicker)
+
+    sectionLabel("  performance")
+    makeFeatureBtn("boost fps", "disable shadows and textures for better fps", "BoostFPS", boostFPS)
+    local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+    mainFrame.InputBegan:Connect(function(input, gp)
+        if gp then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = input.Position; startPos = canvas.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
-        end)
-
-        -- Neon toggle
-        local neonBtn = Instance.new("TextButton")
-        neonBtn.Size = UDim2.new(1, 0, 0, 40)
-        neonBtn.BackgroundColor3 = ColorStates.ModelNeon and Config.OnColor or Color3.fromRGB(200, 80, 80)
-        neonBtn.TextColor3 = Config.TextColor
-        neonBtn.Text = ColorStates.ModelNeon and "NEON: ON" or "NEON: OFF"
-        neonBtn.Font = Enum.Font.GothamBold
-        neonBtn.BorderSizePixel = 0
-        neonBtn.Parent = modelGui
-
-        local neonBtnCorner = Instance.new("UICorner")
-        neonBtnCorner.CornerRadius = UDim.new(0, 8)
-        neonBtnCorner.Parent = neonBtn
-
-        neonBtn.MouseButton1Click:Connect(function()
-            ColorStates.ModelNeon = not ColorStates.ModelNeon
-            neonBtn.Text = ColorStates.ModelNeon and "NEON: ON" or "NEON: OFF"
-            local TweenService = game:GetService("TweenService")
-            TweenService:Create(neonBtn, TweenInfo.new(0.2), {BackgroundColor3 = ColorStates.ModelNeon and Config.OnColor or Color3.fromRGB(200, 80, 80)}):Play()
-        end)
-
-        createModelOption("● CIRCLE", "Ball")
-        createModelOption("■ SQUARE", "Block")
-        createModelOption("▲ TRIANGLE", "Block")
-
-        local backBtn = Instance.new("TextButton")
-        backBtn.Size = UDim2.new(1, 0, 0, 40)
-        backBtn.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
-        backBtn.TextColor3 = Config.TextColor
-        backBtn.Text = "BACK"
-        backBtn.Font = Enum.Font.GothamBold
-        backBtn.BorderSizePixel = 0
-        backBtn.Parent = modelGui
-
-        local backCorner = Instance.new("UICorner")
-        backCorner.CornerRadius = UDim.new(0, 8)
-        backCorner.Parent = backBtn
-
-        backBtn.MouseButton1Click:Connect(function()
-            contentFrame.Visible = true
-            titleBar.Visible = true
-            modelGui:Destroy()
-        end)
-    end
-
-    local modelBtn = Instance.new("TextButton")
-    modelBtn.Name = "ModelChanger"
-    modelBtn.Size = UDim2.new(1, 0, 0, 70)
-    modelBtn.BackgroundColor3 = Config.DarkColor
-    modelBtn.BorderSizePixel = 0
-    modelBtn.TextTransparency = 1
-    modelBtn.Parent = contentFrame
-
-    local modelBtnCorner = Instance.new("UICorner")
-    modelBtnCorner.CornerRadius = UDim.new(0, 8)
-    modelBtnCorner.Parent = modelBtn
-
-    local modelBtnPadding = Instance.new("UIPadding")
-    modelBtnPadding.PaddingLeft = UDim.new(0, 12)
-    modelBtnPadding.PaddingRight = UDim.new(0, 12)
-    modelBtnPadding.PaddingTop = UDim.new(0, 8)
-    modelBtnPadding.PaddingBottom = UDim.new(0, 8)
-    modelBtnPadding.Parent = modelBtn
-
-    local modelNameText = Instance.new("TextLabel")
-    modelNameText.Size = UDim2.new(1, 0, 0, 25)
-    modelNameText.BackgroundTransparency = 1
-    modelNameText.Text = "MODEL CHANGER"
-    modelNameText.TextColor3 = Config.AccentColor
-    modelNameText.TextSize = 16
-    modelNameText.Font = Enum.Font.GothamBold
-    modelNameText.TextXAlignment = Enum.TextXAlignment.Left
-    modelNameText.Parent = modelBtn
-
-    local modelDescText = Instance.new("TextLabel")
-    modelDescText.Size = UDim2.new(1, 0, 0, 35)
-    modelDescText.Position = UDim2.new(0, 0, 0, 25)
-    modelDescText.BackgroundTransparency = 1
-    modelDescText.Text = "Change your visual appearance and customize colors"
-    modelDescText.TextColor3 = Color3.fromRGB(180, 180, 180)
-    modelDescText.TextSize = 11
-    modelDescText.Font = Enum.Font.Gotham
-    modelDescText.TextXAlignment = Enum.TextXAlignment.Left
-    modelDescText.TextWrapped = true
-    modelDescText.Parent = modelBtn
-
-    modelBtn.MouseButton1Click:Connect(function()
-        contentFrame.Visible = false
-        titleBar.Visible = false
-        createModelChanger()
+        end
     end)
-
-    modelBtn.MouseEnter:Connect(function()
-        local TweenService = game:GetService("TweenService")
-        TweenService:Create(modelBtn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(35, 35, 45)}):Play()
+    mainFrame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
     end)
-
-    modelBtn.MouseLeave:Connect(function()
-        local TweenService = game:GetService("TweenService")
-        TweenService:Create(modelBtn, TweenInfo.new(0.2), {BackgroundColor3 = Config.DarkColor}):Play()
-    end)
-
-    -- Dragging Functionality
-    local dragging = false
-    local dragStart
-    local startPos
-
-    titleBar.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed then return end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            dragStart = input.Position
-            startPos = mainFrame.Position
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local d = input.Position - dragStart
+            canvas.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
         end
     end)
 
-    UserInputService.InputChanged:Connect(function(input, gameProcessed)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local delta = input.Position - dragStart
-            mainFrame.Position = startPos + UDim2.new(0, delta.X, 0, delta.Y)
-        end
-    end)
-
-    UserInputService.InputEnded:Connect(function(input, gameProcessed)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end)
-
-    -- Close Button Functionality
+    -- ── Close ─────────────────────────────────────────────────────────────────
     closeBtn.MouseButton1Click:Connect(function()
-        screenGui:Destroy()
-        createMinimizedButton()
+        TweenService:Create(canvas, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+            {Size = UDim2.new(0, 50, 0, 50), Position = UDim2.new(0, 20, 1, -70)}):Play()
+        TweenService:Create(canvas, TweenInfo.new(0.25, Enum.EasingStyle.Linear),
+            {GroupTransparency = 1}):Play()
+        task.delay(0.32, function()
+            sg:Destroy()
+            createMinimizedButton()
+        end)
     end)
-
-    return screenGui
 end
 
--- Create Minimized Button with Animation
+-- ── Minimized V Button ────────────────────────────────────────────────────────
 function createMinimizedButton()
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "VenseMinimized"
-    screenGui.ResetOnSpawn = false
-    screenGui.Parent = playerGui
-
-    local minimizedBtn = Instance.new("TextButton")
-    minimizedBtn.Name = "MinimizedBtn"
-    minimizedBtn.Size = UDim2.new(0, 50, 0, 50)
-    minimizedBtn.Position = UDim2.new(0, 20, 1, -70)
-    minimizedBtn.BackgroundColor3 = Config.AccentColor
-    minimizedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    minimizedBtn.Text = "V"
-    minimizedBtn.TextSize = 24
-    minimizedBtn.Font = Enum.Font.GothamBold
-    minimizedBtn.BorderSizePixel = 0
-    minimizedBtn.Parent = screenGui
-
-    local minimizedCorner = Instance.new("UICorner")
-    minimizedCorner.CornerRadius = UDim.new(0, 8)
-    minimizedCorner.Parent = minimizedBtn
-
-    local function onButtonClick()
-        -- Animation: Scale up and restore GUI
-        local TweenService = game:GetService("TweenService")
-        local originalSize = minimizedBtn.Size
-        
-        TweenService:Create(
-            minimizedBtn,
-            TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
-            {Size = UDim2.new(0, 60, 0, 60)}
-        ):Play()
-
-        wait(0.15)
-        screenGui:Destroy()
-        createMainGui()
+    if playerGui:FindFirstChild("VenseMinimized") then
+        playerGui.VenseMinimized:Destroy()
     end
 
-    minimizedBtn.MouseButton1Click:Connect(onButtonClick)
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "VenseMinimized"; sg.ResetOnSpawn = false; sg.Parent = playerGui
 
-    -- Mobile Support: Touch Handling
-    minimizedBtn.InputBegan:Connect(function(input, gameProcessed)
-        if input.UserInputType == Enum.UserInputType.Touch then
-            onButtonClick()
+    local btn = Instance.new("TextButton")
+    btn.Name = "MinimizedBtn"
+    btn.Size = UDim2.new(0, 50, 0, 50)
+    btn.Position = UDim2.new(0, 20, 1, -70)
+    btn.BackgroundColor3 = Config.AccentColor
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.Text = "V"; btn.TextSize = 22; btn.Font = Enum.Font.GothamBold
+    btn.BorderSizePixel = 0; btn.Parent = sg
+    uiCorner(btn, 10)
+
+    -- Idle pulse
+    coroutine.wrap(function()
+        while btn.Parent do
+            makeTween(btn, 0.8, {Size = UDim2.new(0, 54, 0, 54)}):Play()
+            wait(0.8)
+            if not btn.Parent then break end
+            makeTween(btn, 0.8, {Size = UDim2.new(0, 50, 0, 50)}):Play()
+            wait(0.8)
         end
-    end)
+    end)()
 
-    -- Bounce animation on spawn
-    local TweenService = game:GetService("TweenService")
-    minimizedBtn.Position = UDim2.new(0, 20, 1, -50)
-    TweenService:Create(
-        minimizedBtn,
-        TweenInfo.new(0.4, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out),
-        {Position = UDim2.new(0, 20, 1, -70)}
-    ):Play()
+    local clicked = false
+    local function onButtonClick()
+        if clicked then return end
+        clicked = true
+        makeTween(btn, 0.12, {Size = UDim2.new(0, 42, 0, 42)}):Play()
+        wait(0.12)
+        createMainGui(true, sg, btn)
+    end
+
+    btn.MouseButton1Click:Connect(onButtonClick)
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch then onButtonClick() end
+    end)
 end
 
--- Initialize
+-- ── Init ──────────────────────────────────────────────────────────────────────
 createInjectionAnimation()
 wait(2)
-          createMainGui()
+createMainGui(false, nil, nil)
